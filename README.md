@@ -12,34 +12,39 @@ An autonomous crypto trading agent that executes trades 24/7 without per-trade h
 
 ## Build Status
 
-**Current Phase: Phase 0 — Ruthless MVP**
+**Current Phase: Phase 0 — Ruthless MVP (Completed)**
 
-Nothing is live. Building the validation pipeline first.
+We have completed the structural scaffolding for Phase 0, including:
+- Data fetchers (Bybit -> Supabase)
+- Hybrid architecture (TypeScript orchestration, Python vectorized engine)
+- The triple-lock validation engine (Walk-Forward Optimization, Monte Carlo Simulation, Overfit Risk Detection)
+- Implementation of `Strategy 001: Funding Rate Extreme Reversal`
 
 > Gate 1 (one strategy with PASS verdict) must be reached before Phase 1 begins.
 
-## Quick Start
+## Quick Start & Testing
 
 ```bash
 # Install TypeScript dependencies
 pnpm install
 
 # Install Python dependencies
-uv sync
+uv pip install -e .
+# (or if using standard pip: python3 -m pip install supabase python-dotenv pandas numpy)
 
 # Copy and configure environment
 cp .env.example .env
-# Fill in: SUPABASE_URL, SUPABASE_ANON_KEY, UPSTASH_REDIS_REST_URL, UPSTASH_REDIS_REST_TOKEN
-# Bybit keys are optional in Phase 0 (public OHLCV endpoints used)
+# Fill in: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
+# Bybit keys are NOT required for fetching historical data (ensure BYBIT_TESTNET=false)
 
 # Run Supabase migration
 # → Open Supabase Dashboard → SQL Editor → paste supabase/migrations/001_initial_schema.sql → Run
 
-# Fetch OHLCV data
-pnpm run data:fetch
+# 1. Fetch OHLCV data & Funding Rates (TypeScript)
+pnpm tsx tests/dummy_fetch.ts
 
-# Run backtest (Python engine)
-uv run python -m engine.backtest.engine --strategy strategy_001 --symbol SOLUSDT --timeframe 1h
+# 2. Run backtest (Python Engine)
+python3 tests/dummy_backtest.py
 ```
 
 ## Project Identity Rule (from brief)
