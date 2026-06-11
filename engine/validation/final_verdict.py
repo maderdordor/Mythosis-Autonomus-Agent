@@ -33,12 +33,12 @@ class WFOResult:
 
 
 @dataclass
-class MCResult:
-    verdict: str  # PASS | FAIL
-    risk_of_ruin: float
-    profitable_pct: float
-    worst_drawdown_pct: float
-    p5_return_pct: float
+class MonteCarloResult:
+    verdict: str  # PASS | MARGINAL | FAIL
+    prob_of_ruin: float
+    expected_shortfall: float
+    var_95: float
+    simulations_run: int
     reasons: list[str] = field(default_factory=list)
 
 
@@ -87,7 +87,7 @@ class FinalVerdictResult:
 def compute_final_verdict(
     strategy_id: str,
     wfo: WFOResult,
-    mc: MCResult,
+    mc: MonteCarloResult,
     holdout: HoldoutResult,
     overfit: OverfitResult,
     fee_viability: FeeViabilityResult,
@@ -126,13 +126,13 @@ def compute_final_verdict(
     if mc.verdict == VERDICT_FAIL:
         failed_components.append("Monte Carlo")
         reasons.extend(mc.reasons)
-        if mc.risk_of_ruin > 0:
-            reasons.append(f"Risk of ruin = {mc.risk_of_ruin:.1%} (must be 0%)")
+        if mc.prob_of_ruin > 0:
+            reasons.append(f"Risk of ruin = {mc.prob_of_ruin:.1%} (must be 0%)")
             suggestions.append("Reduce position sizing or widen stop loss to eliminate ruin scenarios")
-        if mc.profitable_pct < 0.80:
-            reasons.append(f"Profitable simulations = {mc.profitable_pct:.1%} (must be >= 80%)")
-        if mc.worst_drawdown_pct > cfg.MAX_ACCOUNT_DRAWDOWN * 100:
-            reasons.append(f"Worst-case drawdown = {mc.worst_drawdown_pct:.1f}% exceeds limit of {cfg.MAX_ACCOUNT_DRAWDOWN*100:.0f}%")
+        if mc.expected_shortfall > 0.50:
+            reasons.append(f"Expected Shortfall = {mc.expected_shortfall:.1%} (must be <= 50%)")
+        if mc.var_95 > cfg.MAX_ACCOUNT_DRAWDOWN:
+            reasons.append(f"95% VaR = {mc.var_95:.1%} exceeds limit of {cfg.MAX_ACCOUNT_DRAWDOWN:.0%}")
     else:
         passed_components.append("Monte Carlo")
 
