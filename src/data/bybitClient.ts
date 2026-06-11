@@ -272,27 +272,62 @@ export async function fetchFundingRates(
   // Default: 1 year lookback
   const sinceTs = since?.getTime() ?? (Date.now() - 365 * 24 * 60 * 60_000)
 
-  let rawRates: FundingRateHistory[] = []
+  // Bybit funding rate interval = 8 hours = 28,800,000 ms
+  const FUNDING_INTERVAL_MS = 8 * 60 * 60 * 1000
+  const BATCH_SIZE = 200
 
-  try {
-    // ccxt fetchFundingRateHistory — Bybit supports up to 200 records per call
-    rawRates = (await bybitClient.fetchFundingRateHistory(symbol, sinceTs)) as FundingRateHistory[]
-  } catch (err) {
-    log.error({ symbol, err }, 'Failed to fetch funding rate history')
-    return { symbol, fetched: 0, inserted: 0 }
+  let allRates: FundingRateHistory[] = []
+  let currentSince = sinceTs
+
+  log.info({ symbol, since: new Date(sinceTs).toISOString() }, 'Starting paginated funding rate fetch')
+
+  // Paginate until we reach the present
+  while (currentSince < Date.now() - FUNDING_INTERVAL_MS) {
+    let batch: FundingRateHistory[] = []
+
+    try {
+      batch = (await bybitClient.fetchFundingRateHistory(symbol, currentSince, BATCH_SIZE)) as FundingRateHistory[]
+    } catch (err) {
+      log.error({ symbol, err }, 'Failed to fetch funding rate history batch')
+      break
+    }
+
+    if (!batch || batch.length === 0) break
+
+    allRates = allRates.concat(batch)
+
+    // Advance cursor past last fetched record
+    const lastTs = batch[batch.length - 1]?.timestamp as number | undefined
+    if (!lastTs) break
+
+    currentSince = lastTs + FUNDING_INTERVAL_MS
+
+    log.debug({ symbol, totalFetched: allRates.length, nextSince: new Date(currentSince).toISOString() }, 'Funding rate batch fetched')
+
+    // If we got fewer than batch size, we've reached the end
+    if (batch.length < BATCH_SIZE) break
   }
 
-  if (!rawRates || rawRates.length === 0) {
+  if (allRates.length === 0) {
     log.warn({ symbol }, 'No funding rate data returned')
     return { symbol, fetched: 0, inserted: 0 }
   }
 
-  const rows = rawRates.map(r => ({
-    exchange: 'bybit',
-    symbol,
-    timestamp: new Date((r.timestamp ?? 0) as number).toISOString(),
-    funding_rate: (r.fundingRate ?? 0) as number,
-  }))
+  // Deduplicate by timestamp before upserting
+  const seen = new Set<string>()
+  const rows = allRates
+    .filter(r => {
+      const key = `${symbol}:${r.timestamp}`
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+    .map(r => ({
+      exchange: 'bybit',
+      symbol,
+      timestamp: new Date((r.timestamp ?? 0) as number).toISOString(),
+      funding_rate: (r.fundingRate ?? 0) as number,
+    }))
 
   const { error, count } = await supabase
     .from('funding_rates')
@@ -304,10 +339,10 @@ export async function fetchFundingRates(
 
   if (error) {
     log.error({ symbol, error }, 'Failed to upsert funding rates')
-    return { symbol, fetched: rawRates.length, inserted: 0 }
+    return { symbol, fetched: allRates.length, inserted: 0 }
   }
 
-  const result = { symbol, fetched: rawRates.length, inserted: count ?? 0 }
+  const result = { symbol, fetched: allRates.length, inserted: count ?? 0 }
   log.info(result, 'Funding rates stored')
   return result
 }
