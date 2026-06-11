@@ -3,6 +3,7 @@ engine/strategies/strategy_001.py
 Strategy 001: Funding Rate Extreme Reversal.
 """
 
+from __future__ import annotations
 from typing import Any
 import numpy as np
 import pandas as pd
