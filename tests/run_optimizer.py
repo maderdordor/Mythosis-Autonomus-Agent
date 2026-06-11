@@ -78,19 +78,33 @@ def load_data() -> tuple[pd.DataFrame, pd.DataFrame]:
     print(f"\n📥  Loading {SYMBOL} OHLCV from Supabase…")
     supa = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-    resp = (
-        supa.table("ohlcv")
-        .select("*")
-        .eq("symbol", SYMBOL)
-        .eq("timeframe", TIMEFRAME)
-        .order("timestamp", desc=False)
-        .execute()
-    )
-    if not resp.data:
+    # Paginate through all rows (Supabase default limit is 1000 per request)
+    all_rows = []
+    page_size = 1000
+    offset = 0
+    while True:
+        resp = (
+            supa.table("ohlcv_candles")
+            .select("*")
+            .eq("symbol", SYMBOL)
+            .eq("timeframe", TIMEFRAME)
+            .order("timestamp", desc=False)
+            .range(offset, offset + page_size - 1)
+            .execute()
+        )
+        if not resp.data:
+            break
+        all_rows.extend(resp.data)
+        if len(resp.data) < page_size:
+            break
+        offset += page_size
+        print(f"   ... loaded {len(all_rows)} rows so far…")
+
+    if not all_rows:
         print("❌  No OHLCV data found! Run tests/full_fetch.ts first.")
         sys.exit(1)
 
-    candles_df = pd.DataFrame(resp.data)
+    candles_df = pd.DataFrame(all_rows)
     candles_df["timestamp"] = pd.to_datetime(candles_df["timestamp"])
     for col in ["open", "high", "low", "close", "volume"]:
         candles_df[col] = candles_df[col].astype(float)
