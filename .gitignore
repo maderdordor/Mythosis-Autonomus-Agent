@@ -1,0 +1,59 @@
+# === Environment ===
+.env
+.env.local
+.env.*.local
+
+# === Node / TypeScript ===
+node_modules/
+dist/
+build/
+*.js.map
+*.d.ts.map
+.pnpm-store/
+
+# === Python ===
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyc
+.venv/
+venv/
+.uv/
+*.egg-info/
+dist/
+.eggs/
+*.so
+
+# === Data files (raw OHLCV — large, fetched on demand) ===
+data/raw/
+data/processed/
+data/cache/
+data/nansen_snapshots/
+*.parquet
+*.csv
+
+# === Reports (generated, not source) ===
+reports/
+
+# === Logs ===
+logs/
+*.log
+
+# === IDE ===
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# === Test coverage ===
+coverage/
+.nyc_output/
+
+# === Strategy files (sensitive, manage carefully) ===
+strategies/live_ready/
+strategies/validated/
+
+# === Misc ===
+*.pid
+tmp/
