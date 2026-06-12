@@ -73,12 +73,10 @@ class FundingRateReversalStrategy(BacktestStrategy):
             log.warning("No funding rate data provided to Strategy 001")
             df["funding_rate"] = 0.0
             
-        # Check funding persistence
-        # Since funding is every 8h, checking the past N intervals means checking if the condition
-        # held for the last N*8 hours. But since we use merge_asof on 1h candles, the funding_rate 
-        # stays constant for 8 hours. 
-        # A simple way to check persistence of N intervals is to look back N*8 bars.
-        lookback_bars = funding_persistence_intervals * 8
+        # A single interval is 8 hours. If persistence = 1, it means we want it to be extreme for 1 bar (the current bar).
+        # We don't want to wait 8 hours (8 bars) for it to be considered persistent, because that misses the spike.
+        # So lookback_bars = funding_persistence_intervals.
+        lookback_bars = max(1, funding_persistence_intervals)
         
         # Condition: extreme negative funding (<= -threshold) for `lookback_bars`
         extreme_neg = df["funding_rate"] <= -funding_threshold
@@ -93,24 +91,20 @@ class FundingRateReversalStrategy(BacktestStrategy):
         # 1. Persistent extreme negative funding
         # 2. Price < EMA
         # 3. RSI < rsi_threshold_long
-        # 4. Volume >= Vol MA
         cond_long = (
             persistent_extreme_neg &
             (close < ema) &
-            (rsi < rsi_threshold_long) &
-            (volume >= vol_ma)
+            (rsi < rsi_threshold_long)
         )
         
         # Short Entry Conditions:
         # 1. Persistent extreme positive funding
         # 2. Price > EMA
         # 3. RSI > rsi_threshold_short
-        # 4. Volume >= Vol MA
         cond_short = (
             persistent_extreme_pos &
             (close > ema) &
-            (rsi > rsi_threshold_short) &
-            (volume >= vol_ma)
+            (rsi > rsi_threshold_short)
         )
         
         # Note: 4h trend filter is omitted here for simplicity in MVP, but can be added 

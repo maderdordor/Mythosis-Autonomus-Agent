@@ -8,7 +8,7 @@ import { createLogger } from '../src/utils/logger.js'
 
 const log = createLogger('full-fetch')
 
-const SYMBOLS  = ['SOLUSDT', 'BTCUSDT', 'ETHUSDT']
+const SYMBOLS  = ['SOLUSDT', 'DOGEUSDT', 'AVAXUSDT', 'LINKUSDT', 'WIFUSDT', 'PEPEUSDT']
 const ONE_YEAR = new Date(Date.now() - 365 * 24 * 60 * 60 * 1000)
 
 async function run() {

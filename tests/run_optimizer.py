@@ -37,19 +37,19 @@ TIMEFRAME = "1h"
 # ────────────────────────────────────────────────────────────────────────────
 SEARCH_SPACE = {
     "funding_threshold": {
-        "min": 0.0005,   # 0.05%
-        "max": 0.002,    # 0.20%
-        "step": 0.0005,
+        "min": 0.0001,   # 0.01%
+        "max": 0.001,    # 0.10%
+        "step": 0.0002,
     },
     "funding_persistence_intervals": {
         "min": 1,
-        "max": 3,
+        "max": 2,
         "step": 1,
     },
     "ema_period": {
-        "min": 10,
-        "max": 30,
-        "step": 10,
+        "min": 5,
+        "max": 20,
+        "step": 5,
     },
     "rsi_period": {
         "min": 10,
@@ -57,18 +57,18 @@ SEARCH_SPACE = {
         "step": 4,
     },
     "rsi_threshold_long": {
-        "min": 35,
+        "min": 40,
         "max": 50,
         "step": 5,
     },
     "rsi_threshold_short": {
         "min": 50,
-        "max": 65,
+        "max": 60,
         "step": 5,
     },
     "atr_sl_multiplier": {
         "min": 1.0,
-        "max": 2.5,
+        "max": 2.0,
         "step": 0.5,
     },
 }
@@ -138,12 +138,12 @@ def print_top_results(results, n=10):
     print(f"{'─'*70}")
     sorted_r = sorted(results, key=lambda r: r.sharpe_ratio, reverse=True)
     for i, r in enumerate(sorted_r[:n], 1):
-        status = "✅ VIABLE" if r.fee_viable else "❌ fee fail"
+        status = "✅ VIABLE" if r.fee_viability_pass else "❌ fee fail"
         print(
             f"  [{i:02d}] Sharpe={r.sharpe_ratio:+.3f}  "
             f"PnL={r.net_pnl_usd:+.2f}  "
             f"Trades={r.total_trades}  "
-            f"Win%={r.win_rate*100:.1f}  "
+            f"Win%={r.win_rate_pct:.1f}  "
             f"DD%={r.max_drawdown_pct*100:.2f}  "
             f"{status}"
         )
@@ -189,7 +189,7 @@ def main():
     # Flag Gate 1 status
     best_res = max(opt_result.all_results, key=lambda r: r.sharpe_ratio)
     print("\n" + "="*70)
-    if best_res.fee_viable and best_res.sharpe_ratio >= 1.0 and best_res.total_trades >= 10:
+    if best_res.fee_viability_pass and best_res.sharpe_ratio >= 1.0 and best_res.total_trades >= 10:
         print("  🟢 GATE 1: CANDIDATE FOUND — proceed to Walk-Forward Validation!")
     elif best_res.total_trades == 0:
         print("  🔴 GATE 1: NO TRADES — loosen funding_threshold or fetch more data")
