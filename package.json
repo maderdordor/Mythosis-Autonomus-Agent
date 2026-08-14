@@ -11,7 +11,7 @@
   "scripts": {
     "build": "tsc --build",
     "dev": "tsx watch src/main/index.ts",
-    "start": "node dist/main/index.js",
+    "start": "node dist/src/main/index.js",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
