@@ -141,7 +141,10 @@ const envSchema = z.object({
   LOG_FORMAT: z.enum(['json', 'pretty']).default('pretty'),
 
   // --- Runtime ---
-  NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
+  NODE_ENV: z.enum(['development', 'production', 'test'])
+    .or(z.literal(''))
+    .transform((v) => (v === '' ? 'production' : v))
+    .default('development'),
 })
 
 // ============================================================================
