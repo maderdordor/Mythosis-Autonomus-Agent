@@ -83,9 +83,8 @@ export class Strategy001 implements Strategy {
 
   generateSignals(data: StrategyInputData, params: StrategyParams): Signal[] {
     const { candles1h, fundingRates } = data
-    if (!fundingRates || fundingRates.length === 0) {
-      throw new Error('Strategy001 requires fundingRates')
-    }
+    if (!candles1h || candles1h.length === 0) return []
+    if (!fundingRates || fundingRates.length === 0) return []
 
     const p = { ...this.getDefaultParams(), ...params }
     
@@ -109,13 +108,16 @@ export class Strategy001 implements Strategy {
     // Basic iterative signal generation (equivalent to python logic)
     for (let i = Math.max(p.ema_period as number, 20); i < candles1h.length; i++) {
       const candle = candles1h[i]
+      if (!candle) continue
       const ts = candle.timestamp.getTime()
       
       // Find latest funding rate before this candle
       let currentFunding = 0
       for (let j = fundingRates.length - 1; j >= 0; j--) {
-        if (fundingRates[j].timestamp.getTime() <= ts) {
-          currentFunding = fundingRates[j].fundingRate
+        const fr = fundingRates[j]
+        if (!fr) continue
+        if (fr.timestamp.getTime() <= ts) {
+          currentFunding = fr.fundingRate
           break
         }
       }
@@ -131,44 +133,47 @@ export class Strategy001 implements Strategy {
       const volMaVal = volMaVals[i]
       const atrVal = atrVals[i]
       
-      let signalAction: 'long' | 'short' | 'flat' = 'flat'
+      let signalAction: 'LONG' | 'SHORT' | 'FLAT' = 'FLAT'
       
       if (
         isExtremeNeg && 
-        close < emaVal && 
-        rsiVal < (p.rsi_threshold_long as number) && 
-        vols[i] >= volMaVal
+        close !== undefined && emaVal !== null && emaVal !== undefined && close < emaVal && 
+        rsiVal !== null && rsiVal !== undefined && rsiVal < (p.rsi_threshold_long as number) && 
+        vols[i] !== undefined && volMaVal !== null && volMaVal !== undefined && vols[i]! >= volMaVal
       ) {
-        signalAction = 'long'
+        signalAction = 'LONG'
       } else if (
         isExtremePos && 
-        close > emaVal && 
-        rsiVal > (p.rsi_threshold_short as number) && 
-        vols[i] >= volMaVal
+        close !== undefined && emaVal !== null && emaVal !== undefined && close > emaVal && 
+        rsiVal !== null && rsiVal !== undefined && rsiVal > (p.rsi_threshold_short as number) && 
+        vols[i] !== undefined && volMaVal !== null && volMaVal !== undefined && vols[i]! >= volMaVal
       ) {
-        signalAction = 'short'
+        signalAction = 'SHORT'
       }
 
-      if (signalAction !== 'flat') {
+      if (signalAction !== 'FLAT' && atrVal !== null && atrVal !== undefined && close !== undefined) {
         const slDist = Math.min((atrVal * (p.atr_sl_multiplier as number)) / close, 0.02)
-        const slPrice = signalAction === 'long' ? close * (1 - slDist) : close * (1 + slDist)
-        const tpPrice = signalAction === 'long' ? close * (1 + slDist * 1.8) : close * (1 - slDist * 1.8)
+        const slPrice = signalAction === 'LONG' ? close * (1 - slDist) : close * (1 + slDist)
+        const tpPrice = signalAction === 'LONG' ? close * (1 + slDist * 1.8) : close * (1 - slDist * 1.8)
 
         signals.push({
           strategyId: this.id,
           symbol: candle.symbol,
-          action: signalAction,
+          side: signalAction as any,
           timestamp: candle.timestamp,
-          suggestedPrice: close,
-          stopLoss: slPrice,
-          takeProfit: tpPrice,
+          entryPrice: close,
+          stopLossPrice: slPrice,
+          takeProfitPrice: tpPrice,
           positionSizePct: p.max_risk_pct as number,
-          reason: 'Funding extreme reversion',
-          metadata: {
+          riskPct: (p.max_risk_pct as number) * slDist,
+          rRatio: 1.8,
+          strength: 'strong',
+          reasons: ['Funding extreme reversion'],
+          indicators: {
             fundingRate: currentFunding,
-            rsi: rsiVal,
-            ema: emaVal,
-            atr: atrVal
+            rsi: rsiVal || 0,
+            ema: emaVal || 0,
+            atr: atrVal || 0
           }
         })
       }

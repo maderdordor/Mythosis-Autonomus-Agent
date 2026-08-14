@@ -25,7 +25,7 @@ async function run() {
         since: ONE_YEAR,
         limit: 1000  // Max batch size per request
       })
-      log.info({ symbol, ...result }, 'OHLCV backfill complete')
+      log.info({ ...result, symbol }, 'OHLCV backfill complete')
     } catch (err) {
       log.error({ symbol, err }, 'OHLCV fetch failed — skipping symbol')
     }
@@ -33,7 +33,7 @@ async function run() {
     log.info({ symbol }, `--- Fetching Funding Rates for ${symbol} ---`)
     try {
       const frResult = await fetchFundingRates(symbol, ONE_YEAR)
-      log.info({ symbol, ...frResult }, 'Funding Rate backfill complete')
+      log.info({ ...frResult, symbol }, 'Funding Rate backfill complete')
     } catch (err) {
       log.error({ symbol, err }, 'Funding Rate fetch failed — skipping symbol')
     }
