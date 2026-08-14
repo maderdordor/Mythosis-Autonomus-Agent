@@ -68,6 +68,7 @@ export async function closePosition(symbol: string, currentPrice: number, reason
   
   const { error } = await supabase.from('trade_logs')
     .update({
+      status: 'CLOSED',
       exit_price: currentPrice,
       exit_time: new Date().toISOString(),
       exit_reason: reason,
@@ -169,6 +170,7 @@ export async function executePaperTrade(symbol: string, side: 'LONG' | 'SHORT', 
       market_type: 'perp',
       exchange: 'bybit',
       side,
+      status: 'RUNNING',
       execution_mode: 'full_auto',
       decision_mode: 'hardcoded',
       entry_price: price,
