@@ -57,3 +57,6 @@ strategies/validated/
 # === Misc ===
 *.pid
 tmp/
+
+# === Scripts ===
+scripts/

@@ -21,9 +21,11 @@ export interface ParamSearchSpace {
 }
 
 export interface StrategyInputData {
-  candles1h: OHLCV[]
-  candles4h?: OHLCV[]     // Optional trend filter timeframe
-  fundingRates?: FundingRate[]  // Required for funding-based strategies
+  symbol?: string         // The asset symbol being evaluated
+  candles1h?: OHLCV[]     // Optional now depending on strategy
+  candles4h?: OHLCV[]     
+  fundingRates?: FundingRate[]
+  orderBook?: any         // CCXT orderBook object
 }
 
 /**
