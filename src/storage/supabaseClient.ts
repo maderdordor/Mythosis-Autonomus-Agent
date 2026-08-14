@@ -1,6 +1,11 @@
 import { createClient } from '@supabase/supabase-js'
 import { config } from '../config/index.js'
 import { createLogger } from '../utils/logger.js'
+import WebSocket from 'ws'
+
+if (!globalThis.WebSocket) {
+  (globalThis as any).WebSocket = WebSocket
+}
 
 const log = createLogger('storage:supabase')
 
