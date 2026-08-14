@@ -38,9 +38,52 @@ interface OpenPosition {
   entryPrice: number;
   size: number;
 }
-const openPositions = new Map<string, OpenPosition>()
+export const openPositions = new Map<string, OpenPosition>()
 
 const PAPER_ACCOUNT_BALANCE = 10000; // Fallback if not LIVE_TRADING
+
+export async function closePosition(symbol: string, currentPrice: number, reason: 'take_profit' | 'stop_loss' | 'strategy_reversal') {
+  const currentPos = openPositions.get(symbol)
+  if (!currentPos) return false;
+
+  if (config.LIVE_TRADING) {
+    try {
+      log.info({ symbol, side: currentPos.side, size: currentPos.size }, `Executing REAL close order on Bybit for ${reason}...`);
+      await bybitClient.createOrder(
+        symbol,
+        'market',
+        currentPos.side === 'LONG' ? 'sell' : 'buy',
+        currentPos.size,
+        undefined,
+        { reduceOnly: true }
+      );
+      log.info('REAL close order filled successfully.');
+    } catch (closeErr) {
+      log.error({ symbol, err: closeErr }, 'Failed to execute real close order on Bybit');
+    }
+  }
+
+  const priceDiff = currentPos.side === 'LONG' ? (currentPrice - currentPos.entryPrice) : (currentPos.entryPrice - currentPrice)
+  const pnlAmount = priceDiff * currentPos.size
+  
+  const { error } = await supabase.from('trade_logs')
+    .update({
+      exit_price: currentPrice,
+      exit_time: new Date().toISOString(),
+      exit_reason: reason,
+      net_pnl_usd: pnlAmount
+    })
+    .eq('id', currentPos.id)
+
+  if (error) {
+    log.error({ error }, 'Failed to update closed trade log')
+  } else {
+    log.info({ symbol, closedPos: currentPos.side, reason, netPnlUsd: pnlAmount.toFixed(4) }, 'Closed position with REAL PnL')
+  }
+  
+  openPositions.delete(symbol)
+  return true;
+}
 
 export async function executePaperTrade(symbol: string, side: 'LONG' | 'SHORT', suggestedPrice: number | undefined, strategyId: string, positionSizePct: number) {
   log.info({ symbol, side, suggestedPrice }, 'Attempting to execute trade')
@@ -60,7 +103,16 @@ export async function executePaperTrade(symbol: string, side: 'LONG' | 'SHORT', 
         price = ticker.last || ticker.close || 0
       } catch (fetchErr) {
         log.warn({ symbol }, 'Failed to fetch ticker from Bybit. Using fallback.')
-        price = 150.0 
+        // Realistic dynamic fallback
+        let basePrice = 150.0;
+        if (symbol.includes('BTC')) basePrice = 60000.0;
+        else if (symbol.includes('ETH')) basePrice = 3000.0;
+        else if (symbol.includes('SOL')) basePrice = 150.0;
+        else if (symbol.includes('DOGE')) basePrice = 0.15;
+        else if (symbol.includes('XRP')) basePrice = 0.60;
+        else if (symbol.includes('BNB')) basePrice = 600.0;
+        
+        price = basePrice * (1 + (Math.random() * 0.002 - 0.001));
       }
     }
 
@@ -105,47 +157,9 @@ export async function executePaperTrade(symbol: string, side: 'LONG' | 'SHORT', 
 
     const dbStrategyId = await getStrategyIdFromDB(strategyId)
 
-    // 2. If reversing position, we first close the old one (calculate real PnL)
+    // 2. If reversing position, we first close the old one
     if (currentPos) {
-      if (config.LIVE_TRADING) {
-        try {
-          log.info({ symbol, side: currentPos.side, size: currentPos.size }, 'Executing REAL close order on Bybit...');
-          // Execute opposite market order to close
-          await bybitClient.createOrder(
-            symbol,
-            'market',
-            currentPos.side === 'LONG' ? 'sell' : 'buy',
-            currentPos.size,
-            undefined,
-            { reduceOnly: true }
-          );
-          log.info('REAL close order filled successfully.');
-        } catch (closeErr) {
-          log.error({ symbol, err: closeErr }, 'Failed to execute real close order on Bybit');
-          // Proceed anyway to keep local state clean, or return false depending on strictness
-        }
-      }
-
-      // Real PnL calculation based on price difference
-      const priceDiff = currentPos.side === 'LONG' ? (price - currentPos.entryPrice) : (currentPos.entryPrice - price)
-      const pnlAmount = priceDiff * currentPos.size
-      
-      const { error } = await supabase.from('trade_logs')
-        .update({
-          exit_price: price,
-          exit_time: new Date().toISOString(),
-          exit_reason: 'strategy_reversal',
-          net_pnl_usd: pnlAmount
-        })
-        .eq('id', currentPos.id)
-
-      if (error) {
-        log.error({ error }, 'Failed to update closed trade log')
-      } else {
-        log.info({ symbol, closedPos: currentPos.side, netPnlUsd: pnlAmount.toFixed(4) }, 'Closed previous position with REAL PnL')
-      }
-      
-      openPositions.delete(symbol)
+      await closePosition(symbol, price, 'strategy_reversal')
     }
 
     // 3. Write new open position to Supabase trade_logs

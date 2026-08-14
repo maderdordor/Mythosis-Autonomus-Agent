@@ -1,7 +1,7 @@
 import { createLogger } from '../utils/logger.js'
-import { executePaperTrade } from '../execution/OrderExecutor.js'
+import { executePaperTrade, closePosition, openPositions } from '../execution/OrderExecutor.js'
 import { config } from '../config/index.js'
-import { fetchOrderBook } from '../data/bybitClient.js'
+import { fetchOrderBook, bybitClient } from '../data/bybitClient.js'
 import { getStrategy } from '../strategies/interface.js'
 import '../strategies/strategy_002_obi.js'
 
@@ -35,9 +35,35 @@ export class BotOrchestrator {
   private async scanCycle() {
     log.debug('--- Starting Scan Cycle ---')
     try {
-      const strat = getStrategy('22222222-2222-2222-2222-222222222222')
+      const strat = getStrategy('f8a14b53-99b8-472e-8d59-3d19eb9c882a')
       const targetSymbols = strat.symbols && strat.symbols.length > 0 ? strat.symbols : ['SOLUSDT']
 
+      // 1. Evaluate open positions for TP / SL
+      for (const [symbol, position] of openPositions.entries()) {
+        try {
+          const ticker = await bybitClient.fetchTicker(symbol).catch(() => ({ last: position.entryPrice, close: position.entryPrice }));
+          const currentPrice = ticker.last || ticker.close || position.entryPrice;
+          
+          if (currentPrice > 0 && currentPrice !== position.entryPrice) {
+            const pnlPct = position.side === 'LONG' 
+              ? (currentPrice - position.entryPrice) / position.entryPrice 
+              : (position.entryPrice - currentPrice) / position.entryPrice;
+              
+            // Hardcoded basic risk management: 2% TP, 1% SL
+            if (pnlPct >= 0.02) {
+              log.info({ symbol, pnlPct: (pnlPct * 100).toFixed(2) + '%' }, 'Take Profit hit!');
+              await closePosition(symbol, currentPrice, 'take_profit');
+            } else if (pnlPct <= -0.01) {
+              log.info({ symbol, pnlPct: (pnlPct * 100).toFixed(2) + '%' }, 'Stop Loss hit!');
+              await closePosition(symbol, currentPrice, 'stop_loss');
+            }
+          }
+        } catch (err) {
+          log.error({ err, symbol }, 'Error evaluating TP/SL');
+        }
+      }
+
+      // 2. Generate new signals
       for (const symbol of targetSymbols) {
         try {
           const orderBook = await fetchOrderBook(symbol, 20)

@@ -445,7 +445,15 @@ export async function fetchOrderBook(symbol: string, limit: number = 20) {
     // Simulate a fake order book with occasional extreme imbalances to trigger Strategy 002
     const bids: [number, number][] = []
     const asks: [number, number][] = []
-    const basePrice = 150.0
+    let basePrice = 150.0
+    if (symbol.includes('BTC')) basePrice = 60000.0
+    else if (symbol.includes('ETH')) basePrice = 3000.0
+    else if (symbol.includes('SOL')) basePrice = 150.0
+    else if (symbol.includes('DOGE')) basePrice = 0.15
+    else if (symbol.includes('XRP')) basePrice = 0.60
+    else if (symbol.includes('BNB')) basePrice = 600.0
+    
+    basePrice = basePrice * (1 + (Math.random() * 0.002 - 0.001))
     
     // 20% chance to generate a massive buy wall (imbalance > 70%)
     const isExtremeBuy = Math.random() < 0.20

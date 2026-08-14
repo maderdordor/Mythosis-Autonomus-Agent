@@ -14,7 +14,7 @@ This is a high-frequency style strategy suitable for fast, algorithmic execution
 `
 
 export class Strategy002 implements Strategy {
-  readonly id = '22222222-2222-2222-2222-222222222222'
+  readonly id = 'f8a14b53-99b8-472e-8d59-3d19eb9c882a'
   readonly name = 'Order Book Imbalance Limit Scalper'
   readonly version = '0.1.0'
   readonly edgeThesis = edgeThesis.trim()
