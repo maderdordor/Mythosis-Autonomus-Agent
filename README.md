@@ -1,5 +1,9 @@
 # Mythos Trading Agent
 
+## 🌐 Socials & Links
+- **X (Twitter)**: [https://x.com/MythosAgent7](https://x.com/MythosAgent7)
+- **Contract Address (CA)**: [EfRzwe6C4aCLKKZsLPZsTZVDSLMFAzZhMsMK1MRgpump](https://pump.fun/EfRzwe6C4aCLKKZsLPZsTZVDSLMFAzZhMsMK1MRgpump)
+
 An autonomous crypto trading agent that executes trades 24/7 without per-trade human intervention once a strategy is promoted to live.
 
 ## Architecture
