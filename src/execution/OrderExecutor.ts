@@ -47,79 +47,123 @@ export async function syncOpenPositions() {
     .select('id, symbol, side, entry_price, position_size')
     .eq('status', 'RUNNING');
 
-  let bybitPositions: any[] = [];
+  let bybitPositions: any[] | null = null;
   if (config.LIVE_TRADING) {
     try {
       bybitPositions = await fetchBybitPositions();
-      // Debug log the returned positions that have non-zero size
-      const activeBybitPos = bybitPositions.filter(p => Math.abs(Number(p.contracts || p.info?.size || 0)) > 0);
-      log.info({ count: activeBybitPos.length, symbols: activeBybitPos.map(p => p.info?.symbol || p.symbol) }, 'Raw active Bybit positions fetched');
+      // Filter out zero-size positions immediately
+      bybitPositions = bybitPositions.filter(p => Math.abs(Number(p.contracts || p.info?.size || 0)) > 0);
+      log.info({ count: bybitPositions.length, symbols: bybitPositions.map(p => p.info?.symbol || p.symbol) }, 'Active Bybit positions fetched');
     } catch (err) {
-      log.warn('Failed to fetch Bybit positions during sync. Falling back to DB only.');
+      log.warn('Failed to fetch Bybit positions during sync. Will skip Bybit mirroring and only load local DB into memory.');
     }
   }
 
-  const runningSymbolsLocal = new Set((runningTrades || []).map(t => t.symbol));
+  // Helper to extract clean symbol and numbers from ccxt bybit pos
+  const parsePos = (p: any) => {
+    const symbol = p.info?.symbol || p.symbol.replace(/[\/]/g, '').split(':')[0];
+    const size = Math.abs(Number(p.contracts || p.info?.size || 0));
+    // Check if side is Sell/Short
+    const isShort = (p.side && p.side.toUpperCase() === 'SHORT') || 
+                    (p.side && p.side.toUpperCase() === 'SELL') || 
+                    (p.info?.side && p.info?.side.toUpperCase() === 'SELL');
+    const side = isShort ? 'SHORT' : 'LONG';
+    const entryPrice = Number(p.entryPrice || p.info?.avgPrice || 0);
+    return { symbol, size, side, entryPrice };
+  };
 
-  // --- 1. DB -> Bybit: Close orphaned local trades ---
+  const bybitMap = new Map<string, any>();
+  if (bybitPositions) {
+    for (const p of bybitPositions) {
+      const parsed = parsePos(p);
+      bybitMap.set(parsed.symbol, parsed);
+    }
+  }
+
+  // --- 1. Process existing local trades ---
   if (runningTrades && runningTrades.length > 0) {
     for (const trade of runningTrades) {
-      let shouldClose = false;
-
-      if (config.LIVE_TRADING && bybitPositions.length > 0) {
-        const bybitPos = bybitPositions.find(p => 
-          p.symbol === trade.symbol || 
-          p.info?.symbol === trade.symbol || 
-          p.symbol.replace(/[\/]/g, '').split(':')[0] === trade.symbol
-        );
+      if (config.LIVE_TRADING && bybitPositions !== null) {
+        const bp = bybitMap.get(trade.symbol);
         
-        if (!bybitPos || Math.abs(Number(bybitPos.contracts || bybitPos.info?.size || 0)) === 0) {
-          log.info({ 
-            tradeSymbol: trade.symbol, 
-            found: !!bybitPos, 
-            contracts: bybitPos?.contracts, 
-            infoSize: bybitPos?.info?.size 
-          }, 'Debug: Position evaluated as missing or zero size');
-          shouldClose = true;
-        }
-      }
-
-      if (shouldClose) {
-        log.info({ symbol: trade.symbol }, 'Position is missing or size 0 on Bybit. Closing orphaned trade in DB.');
-        
-        let exitPrice = trade.entry_price;
-        try {
-          const recentTrades = await fetchBybitClosedTrades(trade.symbol);
-          const lastTrade = recentTrades?.[recentTrades.length - 1];
-          if (lastTrade) {
-            exitPrice = lastTrade.price || exitPrice;
-          }
-        } catch (e) {}
-
-        const priceDiff = trade.side === 'LONG' ? (exitPrice - trade.entry_price) : (trade.entry_price - exitPrice);
-        const netPnlUsd = priceDiff * trade.position_size;
-
-        const { error } = await supabase.from('trade_logs')
-          .update({
-            status: 'CLOSED',
-            exit_price: exitPrice,
-            exit_time: new Date().toISOString(),
-            exit_reason: 'closed_on_exchange',
-            net_pnl_usd: netPnlUsd
-          })
-          .eq('id', trade.id);
+        if (!bp) {
+          // Exists locally but NOT on Bybit -> CLOSE locally
+          log.info({ symbol: trade.symbol }, 'Position missing on Bybit. Closing orphaned trade in DB.');
           
-        if (!error) {
-          await supabase.from('system_logs').insert({
-            level: 'info',
-            module: 'notification',
-            message: `Position Sync: ${trade.symbol} - Closed via Exchange Sync. PnL: $${netPnlUsd.toFixed(2)}`,
-            details: { type: 'TRADE_CLOSE', symbol: trade.symbol, side: trade.side, pnl: netPnlUsd }
-          });
+          let exitPrice = trade.entry_price;
+          try {
+            const recentTrades = await fetchBybitClosedTrades(trade.symbol);
+            const lastTrade = recentTrades?.[recentTrades.length - 1];
+            if (lastTrade) {
+              exitPrice = lastTrade.price || exitPrice;
+            }
+          } catch (e) {}
+
+          const priceDiff = trade.side === 'LONG' ? (exitPrice - trade.entry_price) : (trade.entry_price - exitPrice);
+          const netPnlUsd = priceDiff * trade.position_size;
+
+          const { error } = await supabase.from('trade_logs')
+            .update({
+              status: 'CLOSED',
+              exit_price: exitPrice,
+              exit_time: new Date().toISOString(),
+              exit_reason: 'closed_on_exchange',
+              net_pnl_usd: netPnlUsd
+            })
+            .eq('id', trade.id);
+            
+          if (!error) {
+            await supabase.from('system_logs').insert({
+              level: 'info',
+              module: 'notification',
+              message: `Position Sync: ${trade.symbol} - Closed via Exchange Sync. PnL: $${netPnlUsd.toFixed(2)}`,
+              details: { type: 'TRADE_CLOSE', symbol: trade.symbol, side: trade.side, pnl: netPnlUsd }
+            });
+          }
+            
+          openPositions.delete(trade.symbol);
+          
+        } else {
+          // Exists locally AND on Bybit -> Mirror EXACT size, side, and entry price
+          const sizeDiff = Math.abs(trade.position_size - bp.size) > 0.000001;
+          const priceDiff = Math.abs(trade.entry_price - bp.entryPrice) > 0.000001;
+          const sideDiff = trade.side !== bp.side;
+          
+          if (sizeDiff || priceDiff || sideDiff) {
+            log.info({ symbol: trade.symbol, oldSize: trade.position_size, newSize: bp.size }, 'Updating local position to perfectly mirror Bybit.');
+            await supabase.from('trade_logs')
+              .update({
+                position_size: bp.size,
+                entry_price: bp.entryPrice,
+                side: bp.side
+              })
+              .eq('id', trade.id);
+            
+            // Update in-memory
+            openPositions.set(trade.symbol, {
+              id: trade.id,
+              side: bp.side,
+              entryPrice: bp.entryPrice,
+              size: bp.size,
+              maxFavorablePrice: bp.entryPrice
+            });
+          } else {
+            // Already perfectly synced
+            if (!openPositions.has(trade.symbol)) {
+              openPositions.set(trade.symbol, {
+                id: trade.id,
+                side: trade.side,
+                entryPrice: trade.entry_price,
+                size: trade.position_size,
+                maxFavorablePrice: trade.entry_price
+              });
+            }
+          }
+          // Remove from bybitMap so we know we processed it
+          bybitMap.delete(trade.symbol);
         }
-        
-        openPositions.delete(trade.symbol);
       } else {
+        // Not live trading or fetch failed -> just load into memory
         if (!openPositions.has(trade.symbol)) {
           openPositions.set(trade.symbol, {
             id: trade.id,
@@ -128,60 +172,95 @@ export async function syncOpenPositions() {
             size: trade.position_size,
             maxFavorablePrice: trade.entry_price
           });
-          log.info({ symbol: trade.symbol, side: trade.side }, 'Synced RUNNING position from database into memory.');
         }
       }
     }
   }
 
-  // --- 2. Bybit -> DB: Recover mistakenly closed trades ---
-  if (config.LIVE_TRADING && bybitPositions.length > 0) {
-    for (const p of bybitPositions) {
-      const activeSize = Math.abs(Number(p.contracts || p.info?.size || 0));
-      if (activeSize > 0) {
-        const symbol = p.info?.symbol || p.symbol.replace(/[\/]/g, '').split(':')[0];
+  // --- 2. Process NEW/Unrecorded positions from Bybit ---
+  if (config.LIVE_TRADING && bybitPositions !== null && bybitMap.size > 0) {
+    // Get a valid strategy_id fallback
+    const { data: stratData } = await supabase.from('strategies').select('id').limit(1);
+    const fallbackStrategyId = stratData?.[0]?.id || null;
+
+    for (const [symbol, bp] of bybitMap.entries()) {
+      // First, check if we mistakenly closed it recently and resurrect it
+      const { data: recentlyClosed } = await supabase
+        .from('trade_logs')
+        .select('*')
+        .eq('symbol', symbol)
+        .eq('status', 'CLOSED')
+        .order('created_at', { ascending: false })
+        .limit(1);
+
+      if (recentlyClosed && recentlyClosed.length > 0) {
+        const tradeToRecover = recentlyClosed[0];
+        log.warn({ symbol, tradeId: tradeToRecover.id }, 'Recovering mistakenly closed trade back to RUNNING state and mirroring Bybit!');
         
-        if (!runningSymbolsLocal.has(symbol)) {
-          // It's active on Bybit but NOT running locally! Check if we mistakenly closed it recently.
-          log.info({ symbol }, 'Found active Bybit position that is NOT running locally. Attempting recovery...');
+        await supabase.from('trade_logs')
+          .update({
+            status: 'RUNNING',
+            exit_price: null,
+            exit_time: null,
+            exit_reason: null,
+            net_pnl_usd: null,
+            position_size: bp.size,
+            entry_price: bp.entryPrice,
+            side: bp.side
+          })
+          .eq('id', tradeToRecover.id);
+
+        openPositions.set(symbol, {
+          id: tradeToRecover.id,
+          side: bp.side,
+          entryPrice: bp.entryPrice,
+          size: bp.size,
+          maxFavorablePrice: bp.entryPrice
+        });
+        
+        await supabase.from('system_logs').insert({
+          level: 'info',
+          module: 'notification',
+          message: `Position Recovery: ${symbol} - Restored to RUNNING state from Bybit sync.`,
+          details: { type: 'TRADE_RECOVER', symbol, side: bp.side }
+        });
+      } else if (fallbackStrategyId) {
+        // Brand new manual trade! Insert it.
+        log.info({ symbol, size: bp.size }, 'Importing unrecorded Bybit position into Dashboard.');
+        
+        const { data: newTrade } = await supabase.from('trade_logs').insert({
+          strategy_id: fallbackStrategyId,
+          symbol,
+          market_type: 'perp',
+          exchange: 'bybit',
+          side: bp.side,
+          status: 'RUNNING',
+          execution_mode: 'manual', // Mark it as manual so user knows
+          decision_mode: 'hardcoded',
+          entry_price: bp.entryPrice,
+          entry_time: new Date().toISOString(),
+          entry_order_id: `manual-import-${Date.now()}`,
+          position_size: bp.size,
+          effective_leverage: 1.0,
+          net_pnl_usd: null,
+          is_paper: false
+        }).select('id').single();
+
+        if (newTrade && newTrade.id) {
+          openPositions.set(symbol, {
+            id: newTrade.id,
+            side: bp.side,
+            entryPrice: bp.entryPrice,
+            size: bp.size,
+            maxFavorablePrice: bp.entryPrice
+          });
           
-          const { data: recentlyClosed } = await supabase
-            .from('trade_logs')
-            .select('*')
-            .eq('symbol', symbol)
-            .eq('status', 'CLOSED')
-            .order('created_at', { ascending: false })
-            .limit(1);
-
-          if (recentlyClosed && recentlyClosed.length > 0) {
-            const tradeToRecover = recentlyClosed[0];
-            log.warn({ symbol, tradeId: tradeToRecover.id }, 'Recovering mistakenly closed trade back to RUNNING state!');
-            
-            await supabase.from('trade_logs')
-              .update({
-                status: 'RUNNING',
-                exit_price: null,
-                exit_time: null,
-                exit_reason: null,
-                net_pnl_usd: null
-              })
-              .eq('id', tradeToRecover.id);
-
-            openPositions.set(symbol, {
-              id: tradeToRecover.id,
-              side: tradeToRecover.side,
-              entryPrice: tradeToRecover.entry_price,
-              size: tradeToRecover.position_size,
-              maxFavorablePrice: tradeToRecover.entry_price
-            });
-
-            await supabase.from('system_logs').insert({
-              level: 'info',
-              module: 'notification',
-              message: `Position Recovery: ${symbol} - Restored to RUNNING state from Bybit sync.`,
-              details: { type: 'TRADE_RECOVER', symbol, side: tradeToRecover.side }
-            });
-          }
+          await supabase.from('system_logs').insert({
+            level: 'info',
+            module: 'notification',
+            message: `Position Imported: ${symbol} - Discovered active Bybit position and imported to Dashboard.`,
+            details: { type: 'TRADE_OPEN', symbol, side: bp.side, price: bp.entryPrice }
+          });
         }
       }
     }
