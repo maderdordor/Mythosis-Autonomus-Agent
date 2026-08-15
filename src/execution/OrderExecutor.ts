@@ -60,6 +60,7 @@ export async function closePosition(symbol: string, currentPrice: number, reason
       log.info('REAL close order filled successfully.');
     } catch (closeErr) {
       log.error({ symbol, err: closeErr }, 'Failed to execute real close order on Bybit');
+      return false;
     }
   }
 
