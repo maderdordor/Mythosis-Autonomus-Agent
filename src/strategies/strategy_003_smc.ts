@@ -1,6 +1,12 @@
 import type { Strategy, StrategyParams, StrategyInputData, ParamSearchSpace } from './interface.js'
 import type { Signal, OHLCV } from '../utils/types.js'
 import { registerStrategy } from './interface.js'
+import { createLogger } from '../utils/logger.js'
+
+const radarLog = createLogger('sniper_radar')
+
+// Keep track of last broadcasted state per symbol to prevent spam
+const lastState = new Map<string, string>()
 
 const edgeThesis = `
 # Strategy 003: SMC Order Block Sniper
@@ -96,17 +102,27 @@ export class Strategy003 implements Strategy {
     const currentPrice = candles[candles.length - 1]!.close;
     const signals: Signal[] = [];
     
-    // 2. Sniper Execution Logic via Order Book
-    
+    let currentState = 'IDLE';
+    let currentPhase = 'IDLE';
+    let currentDetails: any = null;
+
     if (bullishOB && currentPrice <= bullishOB.top * 1.002 && currentPrice >= bullishOB.bottom * 0.998) {
+      currentPhase = 'SEARCHING_WALL';
+      currentState = `Harga masuk Bullish OB (${bullishOB.bottom.toFixed(2)} - ${bullishOB.top.toFixed(2)}). Mencari likuiditas...`;
+      currentDetails = { type: 'LONG', top: bullishOB.top, bottom: bullishOB.bottom };
+
       let biggestBid = orderBook.bids[0];
       for (let i = 1; i < Math.min(20, orderBook.bids.length); i++) {
-        if (orderBook.bids[i][1] > biggestBid[1]) biggestBid = orderBook.bids[i];
+        if (orderBook.bids[i]![1] > biggestBid![1]) biggestBid = orderBook.bids[i];
       }
-      const wallPrice = biggestBid[0];
-      const wallVol = biggestBid[1];
+      const wallPrice = biggestBid![0];
+      const wallVol = biggestBid![1];
       
       if (wallPrice >= bullishOB.bottom * 0.99) {
+        currentPhase = 'TARGET_LOCKED';
+        currentState = `Tembok BID ${wallVol.toFixed(1)} ditemukan di ${wallPrice}. Target LONG terkunci!`;
+        currentDetails = { type: 'LONG', top: bullishOB.top, bottom: bullishOB.bottom, wallPrice, wallVol };
+
         const entryPrice = wallPrice + (wallPrice * 0.0001); 
         const stopLoss = wallPrice - (wallPrice * 0.001); 
         
@@ -126,17 +142,23 @@ export class Strategy003 implements Strategy {
           indicators: { wallPrice, wallVol }
         });
       }
-    }
-    
-    if (bearishOB && currentPrice >= bearishOB.bottom * 0.998 && currentPrice <= bearishOB.top * 1.002) {
+    } else if (bearishOB && currentPrice >= bearishOB.bottom * 0.998 && currentPrice <= bearishOB.top * 1.002) {
+      currentPhase = 'SEARCHING_WALL';
+      currentState = `Harga masuk Bearish OB (${bearishOB.bottom.toFixed(2)} - ${bearishOB.top.toFixed(2)}). Mencari likuiditas...`;
+      currentDetails = { type: 'SHORT', top: bearishOB.top, bottom: bearishOB.bottom };
+
       let biggestAsk = orderBook.asks[0];
       for (let i = 1; i < Math.min(20, orderBook.asks.length); i++) {
-        if (orderBook.asks[i][1] > biggestAsk[1]) biggestAsk = orderBook.asks[i];
+        if (orderBook.asks[i]![1] > biggestAsk![1]) biggestAsk = orderBook.asks[i];
       }
-      const wallPrice = biggestAsk[0];
-      const wallVol = biggestAsk[1];
+      const wallPrice = biggestAsk![0];
+      const wallVol = biggestAsk![1];
       
       if (wallPrice <= bearishOB.top * 1.01) {
+        currentPhase = 'TARGET_LOCKED';
+        currentState = `Tembok ASK ${wallVol.toFixed(1)} ditemukan di ${wallPrice}. Target SHORT terkunci!`;
+        currentDetails = { type: 'SHORT', top: bearishOB.top, bottom: bearishOB.bottom, wallPrice, wallVol };
+
         const entryPrice = wallPrice - (wallPrice * 0.0001); 
         const stopLoss = wallPrice + (wallPrice * 0.001);
         
@@ -156,6 +178,20 @@ export class Strategy003 implements Strategy {
           indicators: { wallPrice, wallVol }
         });
       }
+    } else {
+      currentPhase = 'IDLE';
+      currentState = `Memantau OB 15m. Harga saat ini: ${currentPrice}`;
+      currentDetails = { 
+        bullishOB: bullishOB ? { top: bullishOB.top, bottom: bullishOB.bottom } : null,
+        bearishOB: bearishOB ? { top: bearishOB.top, bottom: bearishOB.bottom } : null
+      };
+    }
+
+    // Broadcast only on state change
+    const stateKey = `${currentSymbol}_${currentPhase}`;
+    if (lastState.get(currentSymbol) !== stateKey) {
+      lastState.set(currentSymbol, stateKey);
+      radarLog.info({ symbol: currentSymbol, phase: currentPhase, details: currentDetails }, currentState);
     }
 
     return signals
