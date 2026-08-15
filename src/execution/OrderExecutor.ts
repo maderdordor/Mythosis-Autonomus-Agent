@@ -1,6 +1,6 @@
 import { createLogger } from '../utils/logger.js'
 import { supabase } from '../storage/supabaseClient.js'
-import { bybitClient } from '../data/bybitClient.js'
+import { bybitClient, fetchBybitPositions, fetchBybitClosedTrades } from '../data/bybitClient.js'
 import { config } from '../config/index.js'
 
 const log = createLogger('execution:order')
@@ -41,11 +41,117 @@ interface OpenPosition {
 }
 export const openPositions = new Map<string, OpenPosition>()
 
+export async function syncOpenPositions() {
+  const { data: runningTrades } = await supabase
+    .from('trade_logs')
+    .select('id, symbol, side, entry_price, position_size')
+    .eq('status', 'RUNNING');
+
+  if (!runningTrades || runningTrades.length === 0) return;
+
+  let bybitPositions: any[] = [];
+  if (config.LIVE_TRADING) {
+    try {
+      // Import here to avoid circular dep if any, or use the imported bybitClient
+      bybitPositions = await fetchBybitPositions();
+    } catch (err) {
+      log.warn('Failed to fetch Bybit positions during sync. Falling back to DB only.');
+    }
+  }
+
+  for (const trade of runningTrades) {
+    let shouldClose = false;
+
+    // True Synchronization Logic
+    if (config.LIVE_TRADING && bybitPositions.length > 0) {
+      const bybitPos = bybitPositions.find(p => p.symbol === trade.symbol);
+      // If position size is 0 or undefined, it's closed on exchange
+      if (!bybitPos || Math.abs(Number(bybitPos.contracts || bybitPos.info?.size || 0)) === 0) {
+        shouldClose = true;
+      }
+    }
+
+    if (shouldClose) {
+      log.info({ symbol: trade.symbol }, 'Position is missing or size 0 on Bybit. Closing orphaned trade in DB.');
+      
+      // Try to fetch exit price from recent trades (optional enhancement)
+      let exitPrice = trade.entry_price;
+      try {
+        const recentTrades = await fetchBybitClosedTrades(trade.symbol);
+        const lastTrade = recentTrades?.[recentTrades.length - 1];
+        if (lastTrade) {
+          exitPrice = lastTrade.price || exitPrice;
+        }
+      } catch (e) {}
+
+      // Calculate approximate PnL
+      const priceDiff = trade.side === 'LONG' ? (exitPrice - trade.entry_price) : (trade.entry_price - exitPrice);
+      const netPnlUsd = priceDiff * trade.position_size; // Ignoring fees for orphaned close
+
+      const { error } = await supabase.from('trade_logs')
+        .update({
+          status: 'CLOSED',
+          exit_price: exitPrice,
+          exit_time: new Date().toISOString(),
+          exit_reason: 'closed_on_exchange',
+          net_pnl_usd: netPnlUsd
+        })
+        .eq('id', trade.id);
+        
+      if (!error) {
+        await supabase.from('system_logs').insert({
+          level: 'info',
+          module: 'notification',
+          message: `Position Sync: ${trade.symbol} - Closed via Exchange Sync. PnL: $${netPnlUsd.toFixed(2)}`,
+          details: { type: 'TRADE_CLOSE', symbol: trade.symbol, side: trade.side, pnl: netPnlUsd }
+        });
+      }
+      
+      // Remove from memory if it somehow got there
+      openPositions.delete(trade.symbol);
+    } else {
+      // Sync into memory
+      if (!openPositions.has(trade.symbol)) {
+        openPositions.set(trade.symbol, {
+          id: trade.id,
+          side: trade.side,
+          entryPrice: trade.entry_price,
+          size: trade.position_size,
+          maxFavorablePrice: trade.entry_price
+        });
+        log.info({ symbol: trade.symbol, side: trade.side }, 'Synced RUNNING position from database into memory.');
+      }
+    }
+  }
+}
+
 const PAPER_ACCOUNT_BALANCE = 10000; // Fallback if not LIVE_TRADING
 
 export async function closePosition(symbol: string, currentPrice: number, reason: 'take_profit' | 'stop_loss' | 'strategy_reversal') {
-  const currentPos = openPositions.get(symbol)
-  if (!currentPos) return false;
+  let currentPos = openPositions.get(symbol)
+  if (!currentPos) {
+    // Check DB in case of restart
+    const { data: existingRunning } = await supabase
+      .from('trade_logs')
+      .select('id, side, entry_price, position_size')
+      .eq('symbol', symbol)
+      .eq('status', 'RUNNING')
+      .limit(1);
+
+    const firstRunning = existingRunning?.[0];
+    if (firstRunning) {
+      currentPos = {
+        id: firstRunning.id,
+        side: firstRunning.side,
+        entryPrice: firstRunning.entry_price,
+        size: firstRunning.position_size,
+        maxFavorablePrice: firstRunning.entry_price
+      };
+      openPositions.set(symbol, currentPos);
+    } else {
+      return false; // No running position found anywhere
+    }
+  }
 
   if (config.LIVE_TRADING) {
     try {
@@ -107,7 +213,29 @@ export async function executePaperTrade(symbol: string, side: 'LONG' | 'SHORT', 
 
   const currentPos = openPositions.get(symbol)
   if (currentPos) {
-    log.info({ symbol, currentSide: currentPos.side, newSignal: side }, 'Position already open, ignoring new signal to prevent premature reversal.')
+    log.info({ symbol, currentSide: currentPos.side, newSignal: side }, 'Position already open in memory, ignoring new signal.')
+    return false;
+  }
+
+  // Check DB as well to prevent duplicates across restarts
+  const { data: existingRunning } = await supabase
+    .from('trade_logs')
+    .select('id, side, entry_price, position_size')
+    .eq('symbol', symbol)
+    .eq('status', 'RUNNING')
+    .limit(1);
+
+  const firstRunning = existingRunning?.[0];
+  if (firstRunning) {
+    // Sync into memory and skip
+    openPositions.set(symbol, {
+      id: firstRunning.id,
+      side: firstRunning.side,
+      entryPrice: firstRunning.entry_price,
+      size: firstRunning.position_size,
+      maxFavorablePrice: firstRunning.entry_price
+    });
+    log.info({ symbol }, 'Found running position in DB. Synced to memory and skipped new signal.');
     return false;
   }
 

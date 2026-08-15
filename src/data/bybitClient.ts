@@ -472,3 +472,30 @@ export async function fetchLiveOHLCV(symbol: string, timeframe: string, limit: n
     throw error
   }
 }
+
+/**
+ * Fetch all open positions from Bybit
+ */
+export async function fetchBybitPositions(symbols?: string[]) {
+  try {
+    const positions = await bybitClient.fetchPositions(symbols);
+    return positions;
+  } catch (error: any) {
+    log.error({ error: error.message }, 'Failed to fetch open positions from Bybit.');
+    throw error;
+  }
+}
+
+/**
+ * Fetch closed orders/trades to get exit price and PnL
+ */
+export async function fetchBybitClosedTrades(symbol: string) {
+  try {
+    // Note: fetchClosedOrders or fetchMyTrades can be used. fetchMyTrades gets actual fills.
+    const trades = await bybitClient.fetchMyTrades(symbol, undefined, 20);
+    return trades;
+  } catch (error: any) {
+    log.error({ symbol, error: error.message }, 'Failed to fetch closed trades from Bybit.');
+    throw error;
+  }
+}

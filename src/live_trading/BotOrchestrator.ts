@@ -1,5 +1,5 @@
 import { createLogger } from '../utils/logger.js'
-import { executePaperTrade, closePosition, openPositions } from '../execution/OrderExecutor.js'
+import { executePaperTrade, closePosition, openPositions, syncOpenPositions } from '../execution/OrderExecutor.js'
 import { config } from '../config/index.js'
 import { fetchOrderBook, bybitClient, fetchLiveOHLCV } from '../data/bybitClient.js'
 import { getStrategy } from '../strategies/interface.js'
@@ -21,6 +21,9 @@ export class BotOrchestrator {
 
     log.info('Bot Orchestrator started. Scan interval: 10 seconds.')
 
+    // Sync state from database before starting the loop
+    await syncOpenPositions()
+
     while (this.isRunning) {
       await this.scanCycle()
       await this.sleep(this.scanIntervalMs)
@@ -35,6 +38,9 @@ export class BotOrchestrator {
   private async scanCycle() {
     log.debug('--- Starting Scan Cycle ---')
     try {
+      // Sync positions from Bybit natively to detect manually closed trades
+      await syncOpenPositions()
+
       // For MVP, we hardcode Strategy 003 SMC Order Block Sniper
       const stratId = '1b9e2a44-66c5-4b5a-9a91-4c6e8e89f8d1' // Strategy 003 ID
       const strat = getStrategy(stratId)
