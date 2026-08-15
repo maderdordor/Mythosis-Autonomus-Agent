@@ -455,7 +455,7 @@ export async function fetchOrderBook(symbol: string, limit: number = 20) {
 export async function fetchLiveOHLCV(symbol: string, timeframe: string, limit: number = 50): Promise<OHLCV[]> {
   try {
     const rawCandles = await bybitClient.fetchOHLCV(symbol, timeframe, undefined, limit)
-    return rawCandles.map(candle => ({
+    return rawCandles.map((candle: any) => ({
       timestamp:  new Date((candle[0] ?? 0) as number),
       open:       (candle[1] ?? 0) as number,
       high:       (candle[2] ?? 0) as number,
@@ -468,7 +468,7 @@ export async function fetchLiveOHLCV(symbol: string, timeframe: string, limit: n
       marketType: 'perp',
     }))
   } catch (error: any) {
-    log.error({ symbol, error: error.message }, 'Failed to fetch live OHLCV')
-    return []
+    log.error({ symbol, error: error.message }, 'Failed to fetch live OHLCV from Bybit.')
+    throw error
   }
 }

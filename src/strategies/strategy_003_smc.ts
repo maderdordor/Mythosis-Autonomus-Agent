@@ -108,7 +108,7 @@ export class Strategy003 implements Strategy {
 
     if (bullishOB && currentPrice <= bullishOB.top * 1.002 && currentPrice >= bullishOB.bottom * 0.998) {
       currentPhase = 'SEARCHING_WALL';
-      currentState = `Harga masuk Bullish OB (${bullishOB.bottom.toFixed(2)} - ${bullishOB.top.toFixed(2)}). Mencari likuiditas...`;
+      currentState = `Price entered Bullish OB (${bullishOB.bottom.toFixed(2)} - ${bullishOB.top.toFixed(2)}). Searching for liquidity...`;
       currentDetails = { type: 'LONG', top: bullishOB.top, bottom: bullishOB.bottom };
 
       let biggestBid = orderBook.bids[0];
@@ -120,7 +120,7 @@ export class Strategy003 implements Strategy {
       
       if (wallPrice >= bullishOB.bottom * 0.99) {
         currentPhase = 'TARGET_LOCKED';
-        currentState = `Tembok BID ${wallVol.toFixed(1)} ditemukan di ${wallPrice}. Target LONG terkunci!`;
+        currentState = `BID wall of ${wallVol.toFixed(1)} found at ${wallPrice}. LONG target locked!`;
         currentDetails = { type: 'LONG', top: bullishOB.top, bottom: bullishOB.bottom, wallPrice, wallVol };
 
         const entryPrice = wallPrice + (wallPrice * 0.0001); 
@@ -144,7 +144,7 @@ export class Strategy003 implements Strategy {
       }
     } else if (bearishOB && currentPrice >= bearishOB.bottom * 0.998 && currentPrice <= bearishOB.top * 1.002) {
       currentPhase = 'SEARCHING_WALL';
-      currentState = `Harga masuk Bearish OB (${bearishOB.bottom.toFixed(2)} - ${bearishOB.top.toFixed(2)}). Mencari likuiditas...`;
+      currentState = `Price entered Bearish OB (${bearishOB.bottom.toFixed(2)} - ${bearishOB.top.toFixed(2)}). Searching for liquidity...`;
       currentDetails = { type: 'SHORT', top: bearishOB.top, bottom: bearishOB.bottom };
 
       let biggestAsk = orderBook.asks[0];
@@ -156,7 +156,7 @@ export class Strategy003 implements Strategy {
       
       if (wallPrice <= bearishOB.top * 1.01) {
         currentPhase = 'TARGET_LOCKED';
-        currentState = `Tembok ASK ${wallVol.toFixed(1)} ditemukan di ${wallPrice}. Target SHORT terkunci!`;
+        currentState = `ASK wall of ${wallVol.toFixed(1)} found at ${wallPrice}. SHORT target locked!`;
         currentDetails = { type: 'SHORT', top: bearishOB.top, bottom: bearishOB.bottom, wallPrice, wallVol };
 
         const entryPrice = wallPrice - (wallPrice * 0.0001); 
@@ -180,7 +180,7 @@ export class Strategy003 implements Strategy {
       }
     } else {
       currentPhase = 'IDLE';
-      currentState = `Memantau OB 15m. Harga saat ini: ${currentPrice}`;
+      currentState = `Monitoring 15m OB. Current price: ${currentPrice.toFixed(4)}`;
       currentDetails = { 
         bullishOB: bullishOB ? { top: bullishOB.top, bottom: bullishOB.bottom } : null,
         bearishOB: bearishOB ? { top: bearishOB.top, bottom: bearishOB.bottom } : null
