@@ -1,9 +1,9 @@
 import { createLogger } from '../utils/logger.js'
 import { executePaperTrade, closePosition, openPositions } from '../execution/OrderExecutor.js'
 import { config } from '../config/index.js'
-import { fetchOrderBook, bybitClient } from '../data/bybitClient.js'
+import { fetchOrderBook, bybitClient, fetchLiveOHLCV } from '../data/bybitClient.js'
 import { getStrategy } from '../strategies/interface.js'
-import '../strategies/strategy_002_obi.js'
+import '../strategies/strategy_003_smc.js'
 
 const log = createLogger('live_trading:orchestrator')
 
@@ -35,7 +35,9 @@ export class BotOrchestrator {
   private async scanCycle() {
     log.debug('--- Starting Scan Cycle ---')
     try {
-      const strat = getStrategy('f8a14b53-99b8-472e-8d59-3d19eb9c882a')
+      // For MVP, we hardcode Strategy 003 SMC Order Block Sniper
+      const stratId = '1b9e2a44-66c5-4b5a-9a91-4c6e8e89f8d1' // Strategy 003 ID
+      const strat = getStrategy(stratId)
       const targetSymbols = strat.symbols && strat.symbols.length > 0 ? strat.symbols : ['SOLUSDT']
 
       // 1. Evaluate open positions for TP / SL
@@ -49,13 +51,45 @@ export class BotOrchestrator {
               ? (currentPrice - position.entryPrice) / position.entryPrice 
               : (position.entryPrice - currentPrice) / position.entryPrice;
               
-            // Hardcoded basic risk management: 2% TP, 1% SL
-            if (pnlPct >= 0.02) {
-              log.info({ symbol, pnlPct: (pnlPct * 100).toFixed(2) + '%' }, 'Take Profit hit!');
-              await closePosition(symbol, currentPrice, 'take_profit');
-            } else if (pnlPct <= -0.01) {
-              log.info({ symbol, pnlPct: (pnlPct * 100).toFixed(2) + '%' }, 'Stop Loss hit!');
-              await closePosition(symbol, currentPrice, 'stop_loss');
+            // Update max favorable price
+            if (position.side === 'LONG' && currentPrice > position.maxFavorablePrice) {
+              position.maxFavorablePrice = currentPrice;
+            } else if (position.side === 'SHORT' && currentPrice < position.maxFavorablePrice) {
+              position.maxFavorablePrice = currentPrice;
+            }
+
+            const maxFavorablePct = position.side === 'LONG'
+              ? (position.maxFavorablePrice - position.entryPrice) / position.entryPrice
+              : (position.entryPrice - position.maxFavorablePrice) / position.entryPrice;
+
+            // Trailing Stop Logic:
+            // 1. Hard Stop Loss at 1.5%
+            // 2. If profit reached 1%, start trailing by 0.5% from max favorable price
+            // 3. Hard Take Profit at 3%
+            
+            let shouldClose = false;
+            let reason: 'take_profit' | 'stop_loss' | 'strategy_reversal' = 'stop_loss';
+
+            if (pnlPct <= -0.015) {
+              shouldClose = true;
+              reason = 'stop_loss';
+              log.info({ symbol, pnlPct: (pnlPct * 100).toFixed(2) + '%' }, 'Hard Stop Loss hit!');
+            } else if (pnlPct >= 0.03) {
+              shouldClose = true;
+              reason = 'take_profit';
+              log.info({ symbol, pnlPct: (pnlPct * 100).toFixed(2) + '%' }, 'Hard Take Profit hit!');
+            } else if (maxFavorablePct >= 0.01) {
+              // Trailing Stop activation
+              const trailingStopPct = maxFavorablePct - 0.005; // Trail by 0.5%
+              if (pnlPct <= trailingStopPct) {
+                shouldClose = true;
+                reason = 'take_profit';
+                log.info({ symbol, pnlPct: (pnlPct * 100).toFixed(2) + '%', trailingStopPct: (trailingStopPct * 100).toFixed(2) + '%' }, 'Trailing Stop hit!');
+              }
+            }
+
+            if (shouldClose) {
+              await closePosition(symbol, currentPrice, reason);
             }
           }
         } catch (err) {
@@ -66,15 +100,20 @@ export class BotOrchestrator {
       // 2. Generate new signals
       for (const symbol of targetSymbols) {
         try {
+          // Fetch order book for micro-structure
           const orderBook = await fetchOrderBook(symbol, 20)
           
-          const signals = strat.generateSignals({ orderBook, symbol }, strat.getDefaultParams())
+          // Fetch 15m candles for SMC Order Block detection
+          const candles15m = await fetchLiveOHLCV(symbol, '15m', 50)
+          
+          // Pass candles to the strategy via candles1h property (as temporary generic holder)
+          const signals = strat.generateSignals({ orderBook, symbol, candles1h: candles15m }, strat.getDefaultParams())
           
           if (signals && signals.length > 0) {
             const sig = signals[signals.length - 1]
             if (!sig) continue
             
-            log.info({ symbol, side: sig.side, price: sig.entryPrice, reason: sig.reasons.join(', ') }, 'OBI Limit Strategy generated signal! Executing.')
+            log.info({ symbol, side: sig.side, price: sig.entryPrice, reason: sig.reasons.join(', ') }, 'SMC Sniper Strategy generated signal! Executing.')
             
             await executePaperTrade(symbol, sig.side === 'long' ? 'LONG' : 'SHORT', sig.entryPrice, strat.id, sig.positionSizePct || 0.05)
           } else {

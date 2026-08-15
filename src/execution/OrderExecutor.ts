@@ -37,6 +37,7 @@ interface OpenPosition {
   side: 'LONG' | 'SHORT';
   entryPrice: number;
   size: number;
+  maxFavorablePrice: number;
 }
 export const openPositions = new Map<string, OpenPosition>()
 
@@ -140,19 +141,22 @@ export async function executePaperTrade(symbol: string, side: 'LONG' | 'SHORT', 
       }
     }
 
-    const usdSize = accountBalance * positionSizePct;
+    // Leverage multiplier
+    const LEVERAGE = 10.0;
+    const usdSize = accountBalance * positionSizePct * LEVERAGE;
     let positionSize = parseFloat((usdSize / price).toFixed(6));
     let orderId = `paper-${Date.now()}`
     
     // Execute real order if LIVE_TRADING
     if (config.LIVE_TRADING) {
       try {
-        log.info({ symbol, side, positionSize }, 'Executing REAL market order on Bybit...');
+        log.info({ symbol, side, positionSize, price, leverage: LEVERAGE }, 'Executing REAL limit order on Bybit...');
         const order = await bybitClient.createOrder(
           symbol,
-          'market',
+          'limit',
           side === 'LONG' ? 'buy' : 'sell',
-          positionSize
+          positionSize,
+          price
         );
         orderId = order.id;
         price = order.average || order.price || price; // Use actual filled price
@@ -195,7 +199,8 @@ export async function executePaperTrade(symbol: string, side: 'LONG' | 'SHORT', 
         id: data.id,
         side,
         entryPrice: price,
-        size: positionSize
+        size: positionSize,
+        maxFavorablePrice: price
       })
     }
     

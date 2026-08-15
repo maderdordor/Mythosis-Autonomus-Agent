@@ -448,3 +448,27 @@ export async function fetchOrderBook(symbol: string, limit: number = 20) {
     throw error
   }
 }
+
+/**
+ * Fetch Live OHLCV directly from Bybit (in-memory, fast, for real-time strategy)
+ */
+export async function fetchLiveOHLCV(symbol: string, timeframe: string, limit: number = 50): Promise<OHLCV[]> {
+  try {
+    const rawCandles = await bybitClient.fetchOHLCV(symbol, timeframe, undefined, limit)
+    return rawCandles.map(candle => ({
+      timestamp:  new Date((candle[0] ?? 0) as number),
+      open:       (candle[1] ?? 0) as number,
+      high:       (candle[2] ?? 0) as number,
+      low:        (candle[3] ?? 0) as number,
+      close:      (candle[4] ?? 0) as number,
+      volume:     (candle[5] ?? 0) as number,
+      exchange:   'bybit',
+      symbol:     symbol,
+      timeframe:  timeframe as Timeframe,
+      marketType: 'perp',
+    }))
+  } catch (error: any) {
+    log.error({ symbol, error: error.message }, 'Failed to fetch live OHLCV')
+    return []
+  }
+}

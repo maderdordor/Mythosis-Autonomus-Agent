@@ -38,7 +38,7 @@ export class Strategy002 implements Strategy {
 
   getDefaultParams(): StrategyParams {
     return {
-      imbalance_threshold: 0.70, // 70%
+      imbalance_threshold: 0.80, // 80%
       depth_levels: 20
     }
   }
