@@ -65,7 +65,13 @@ export async function closePosition(symbol: string, currentPrice: number, reason
   }
 
   const priceDiff = currentPos.side === 'LONG' ? (currentPrice - currentPos.entryPrice) : (currentPos.entryPrice - currentPrice)
-  const pnlAmount = priceDiff * currentPos.size
+  const grossPnl = priceDiff * currentPos.size
+  
+  // Estimate Bybit Taker Fees (0.055% for entry + 0.055% for exit)
+  const takerFeeRate = 0.00055
+  const entryFee = currentPos.entryPrice * currentPos.size * takerFeeRate
+  const exitFee = currentPrice * currentPos.size * takerFeeRate
+  const netPnlUsd = grossPnl - (entryFee + exitFee)
   
   const { error } = await supabase.from('trade_logs')
     .update({
@@ -73,14 +79,14 @@ export async function closePosition(symbol: string, currentPrice: number, reason
       exit_price: currentPrice,
       exit_time: new Date().toISOString(),
       exit_reason: reason,
-      net_pnl_usd: pnlAmount
+      net_pnl_usd: netPnlUsd
     })
     .eq('id', currentPos.id)
 
   if (error) {
     log.error({ error }, 'Failed to update closed trade log')
   } else {
-    log.info({ symbol, closedPos: currentPos.side, reason, netPnlUsd: pnlAmount.toFixed(4) }, 'Closed position with REAL PnL')
+    log.info({ symbol, closedPos: currentPos.side, reason, netPnlUsd: netPnlUsd.toFixed(4) }, 'Closed position with REAL PnL')
   }
   
   openPositions.delete(symbol)
@@ -91,9 +97,9 @@ export async function executePaperTrade(symbol: string, side: 'LONG' | 'SHORT', 
   log.info({ symbol, side, suggestedPrice }, 'Attempting to execute trade')
 
   const currentPos = openPositions.get(symbol)
-  if (currentPos && currentPos.side === side) {
-    // log.warn({ symbol, side }, 'Double position prevented')
-    return false
+  if (currentPos) {
+    log.info({ symbol, currentSide: currentPos.side, newSignal: side }, 'Position already open, ignoring new signal to prevent premature reversal.')
+    return false;
   }
 
   try {
@@ -158,11 +164,6 @@ export async function executePaperTrade(symbol: string, side: 'LONG' | 'SHORT', 
     }
 
     const dbStrategyId = await getStrategyIdFromDB(strategyId)
-
-    // 2. If reversing position, we first close the old one
-    if (currentPos) {
-      await closePosition(symbol, price, 'strategy_reversal')
-    }
 
     // 3. Write new open position to Supabase trade_logs
     const { data, error } = await supabase.from('trade_logs').insert({
