@@ -88,6 +88,14 @@ export async function closePosition(symbol: string, currentPrice: number, reason
     log.error({ error }, 'Failed to update closed trade log')
   } else {
     log.info({ symbol, closedPos: currentPos.side, reason, netPnlUsd: netPnlUsd.toFixed(4) }, 'Closed position with REAL PnL')
+    
+    // Insert notification into system_logs
+    await supabase.from('system_logs').insert({
+      level: 'info',
+      module: 'notification',
+      message: `Position Closed: ${symbol} - ${currentPos.side} position closed for ${reason}. PnL: $${netPnlUsd.toFixed(2)}`,
+      details: { type: 'TRADE_CLOSE', symbol, side: currentPos.side, pnl: netPnlUsd }
+    });
   }
   
   openPositions.delete(symbol)
@@ -192,6 +200,14 @@ export async function executePaperTrade(symbol: string, side: 'LONG' | 'SHORT', 
       log.error({ error }, 'Failed to insert open trade log')
       return false
     }
+
+    // Insert Notification into system_logs
+    await supabase.from('system_logs').insert({
+      level: 'info',
+      module: 'notification',
+      message: `Position Opened: ${symbol} - Opened ${side} position at $${price.toFixed(4)}.`,
+      details: { type: 'TRADE_OPEN', symbol, side, price }
+    });
 
     // 4. Update local state
     if (data && data.id) {
