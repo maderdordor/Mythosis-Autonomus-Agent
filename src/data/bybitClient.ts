@@ -32,7 +32,11 @@ function createBybitClient(): BybitType {
   })
 
   if (config.BYBIT_TESTNET) {
-    client.setSandboxMode(true)
+    if (typeof (client as any).enableDemoTrading === 'function') {
+      ;(client as any).enableDemoTrading(true)
+    } else {
+      client.setSandboxMode(true)
+    }
   }
 
   if (!hasCredentials) {
