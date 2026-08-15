@@ -51,6 +51,9 @@ export async function syncOpenPositions() {
   if (config.LIVE_TRADING) {
     try {
       bybitPositions = await fetchBybitPositions();
+      // Debug log the returned positions that have non-zero size
+      const activeBybitPos = bybitPositions.filter(p => Math.abs(Number(p.contracts || p.info?.size || 0)) > 0);
+      log.info({ count: activeBybitPos.length, symbols: activeBybitPos.map(p => p.info?.symbol || p.symbol) }, 'Raw active Bybit positions fetched');
     } catch (err) {
       log.warn('Failed to fetch Bybit positions during sync. Falling back to DB only.');
     }
@@ -71,6 +74,12 @@ export async function syncOpenPositions() {
         );
         
         if (!bybitPos || Math.abs(Number(bybitPos.contracts || bybitPos.info?.size || 0)) === 0) {
+          log.info({ 
+            tradeSymbol: trade.symbol, 
+            found: !!bybitPos, 
+            contracts: bybitPos?.contracts, 
+            infoSize: bybitPos?.info?.size 
+          }, 'Debug: Position evaluated as missing or zero size');
           shouldClose = true;
         }
       }
