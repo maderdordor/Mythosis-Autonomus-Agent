@@ -2,7 +2,7 @@
 
 ## 🌐 Socials & Links
 - **X (Twitter)**: [https://x.com/MythosAgent7](https://x.com/MythosAgent7)
-- **Contract Address (CA)**: [EfRzwe6C4aCLKKZsLPZsTZVDSLMFAzZhMsMK1MRgpump](https://pump.fun/EfRzwe6C4aCLKKZsLPZsTZVDSLMFAzZhMsMK1MRgpump)
+- **Contract Address (CA)**: [GFjqvQNc64dST5mBcb7FodswGG4DC4ZifBG8haJUpump](https://pump.fun/GFjqvQNc64dST5mBcb7FodswGG4DC4ZifBG8haJUpump)
 
 An autonomous crypto trading agent that executes trades 24/7 without per-trade human intervention once a strategy is promoted to live.
 
